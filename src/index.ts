@@ -2,9 +2,10 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as readline from 'readline';
 import { validateEnv, hasErrors } from './validator';
-import { generateExample, fileExists, resolvePath } from './utils';
-import { LintOptions } from './types';
+import { generateExample, fileExists, resolvePath, checkGitignore, addToGitignore, loadConfig, createDefaultConfig } from './utils';
+import { LintOptions, EnvLintConfig } from './types';
 
 // ANSI color codes
 const colors = {
@@ -19,42 +20,56 @@ const colors = {
 };
 
 function printBanner() {
-  console.log(`${colors.cyan}${colors.bright}`);
-  console.log('╔═══════════════════════════════════════╗');
-  console.log('║           🔍 envlint v1.0.0           ║');
-  console.log('║    .env Validator & Cleaner           ║');
-  console.log('╚═══════════════════════════════════════╝');
-  console.log(colors.reset);
+  console.log(`${colors.cyan}${colors.bright}envlint${colors.reset} ${colors.gray}v1.2.0${colors.reset}\n`);
 }
 
 function printHelp() {
   console.log(`
-${colors.bright}Usage:${colors.reset}
-  envlint [directory] [options]
+${colors.bright}envlint${colors.reset} - Validate your .env files
 
-${colors.bright}Options:${colors.reset}
-  -g, --generate          Generate .env.example from .env
-  -s, --strict            Strict mode (fail on any discrepancy)
-  -e, --env <file>        Specify env file (default: .env)
-  -x, --example <file>    Specify example file (default: .env.example)
-  --fix                  Auto-fix issues (remove duplicates)
-  --no-secrets           Skip secret detection
-  -h, --help             Show this help message
+${colors.bright}QUICK START:${colors.reset}
+  ${colors.green}npx @asimdelal/envlint${colors.reset}              Just run it - that's it!
+  ${colors.green}npx @asimdelal/envlint --init${colors.reset}       Create config file (optional)
 
-${colors.bright}Examples:${colors.reset}
-  envlint                              # Lint current directory
-  envlint ./api                        # Lint specific directory
-  envlint -g                           # Generate .env.example
-  envlint --strict                     # Strict validation
-  envlint --fix                        # Auto-fix duplicates
-  envlint --env .env.local             # Check .env.local
-  envlint -e .env.docker -x .env.example  # Check specific files
+${colors.bright}COMMON COMMANDS:${colors.reset}
+  envlint                            Check .env vs .env.example
+  envlint -g                         Generate .env.example from .env
+  envlint -c .env.staging,.env.prod  Compare two environments
+  envlint --fix                      Auto-fix duplicates
+  envlint --protect                  Add .env to .gitignore
 
-${colors.bright}What it checks:${colors.reset}
-  ✓ Missing variables in .env
-  ✓ Undocumented variables in .env.example
-  ✓ Duplicate variable definitions
-  ✓ Potential secrets accidentally committed
+${colors.bright}OPTIONS:${colors.reset}
+  -g, --generate              Generate .env.example
+  -s, --strict                Fail on undocumented variables
+  -c, --compare <file1,file2> Compare two files
+  --fix                       Auto-fix issues
+  --protect                   Add to .gitignore
+  --init                      Create config file
+  -h, --help                  Show this help
+
+${colors.bright}ADVANCED:${colors.reset}
+  -e, --env <file>            Use different env file
+  -x, --example <file>        Use different example file
+  --exclude <vars>            Skip variables (comma-separated)
+  --no-secrets                Skip secret detection
+  --min-confidence <0-1>      Secret detection threshold (default: 0.7)
+
+${colors.bright}EXAMPLES:${colors.reset}
+  ${colors.gray}# Just validate${colors.reset}
+  envlint
+
+  ${colors.gray}# Compare staging vs production${colors.reset}
+  envlint -c .env.staging,.env.production --exclude NODE_ENV,PORT
+
+  ${colors.gray}# Generate example file${colors.reset}
+  envlint -g
+
+  ${colors.gray}# Use config file for team consistency${colors.reset}
+  envlint --init
+  envlint
+
+${colors.bright}MORE INFO:${colors.reset}
+  Docs: https://github.com/asimd/envlint
 `);
 }
 
@@ -79,7 +94,24 @@ function printSection(title: string) {
   console.log(colors.gray + '─'.repeat(50) + colors.reset);
 }
 
-function main() {
+/**
+ * Simple yes/no prompt for interactive mode
+ */
+async function prompt(question: string): Promise<boolean> {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  
+  return new Promise((resolve) => {
+    rl.question(`${question} ${colors.gray}(y/n)${colors.reset} `, (answer) => {
+      rl.close();
+      resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes');
+    });
+  });
+}
+
+async function main() {
   const args = process.argv.slice(2);
 
   // Parse arguments
@@ -88,18 +120,18 @@ function main() {
     printHelp();
     process.exit(0);
   }
-
-  const generateMode = args.includes('-g') || args.includes('--generate');
-  const strictMode = args.includes('-s') || args.includes('--strict');
-  const checkSecrets = !args.includes('--no-secrets');
-  const fixMode = args.includes('--fix');
-
-  // Get custom file paths
+  
+  // Get directory first (needed for config loading and --init)
   const envFileArg = args.find((arg, i) => (args[i - 1] === '--env' || args[i - 1] === '-e') && !arg.startsWith('-'));
   const exampleFileArg = args.find((arg, i) => (args[i - 1] === '--example' || args[i - 1] === '-x') && !arg.startsWith('-'));
-
-  // Get directory (first non-flag argument or current directory)
-  const dirArg = args.find(arg => !arg.startsWith('-') && arg !== envFileArg && arg !== exampleFileArg) || '.';
+  const compareArg = args.find((arg, i) => (args[i - 1] === '--compare' || args[i - 1] === '-c') && !arg.startsWith('-'));
+  const excludeArg = args.find((arg, i) => args[i - 1] === '--exclude' && !arg.startsWith('-'));
+  const excludePatternArg = args.find((arg, i) => args[i - 1] === '--exclude-pattern' && !arg.startsWith('-'));
+  const onlyArg = args.find((arg, i) => args[i - 1] === '--only' && !arg.startsWith('-'));
+  const secretWhitelistArg = args.find((arg, i) => args[i - 1] === '--secret-whitelist' && !arg.startsWith('-'));
+  const minConfidenceArg = args.find((arg, i) => args[i - 1] === '--min-confidence' && !arg.startsWith('-'));
+  
+  const dirArg = args.find(arg => !arg.startsWith('-') && arg !== envFileArg && arg !== exampleFileArg && arg !== compareArg && arg !== excludeArg && arg !== excludePatternArg && arg !== onlyArg && arg !== secretWhitelistArg && arg !== minConfidenceArg) || '.';
   const targetDir = resolvePath(dirArg);
 
   if (!fs.existsSync(targetDir)) {
@@ -107,10 +139,87 @@ function main() {
     process.exit(1);
   }
 
-  let envPath = envFileArg ? path.join(targetDir, envFileArg) : path.join(targetDir, '.env');
-  const examplePath = exampleFileArg ? path.join(targetDir, exampleFileArg) : path.join(targetDir, '.env.example');
+  // Handle --init command
+  if (args.includes('--init')) {
+    printBanner();
+    const configPath = path.join(targetDir, '.envlintrc.json');
+    
+    if (fs.existsSync(configPath)) {
+      printWarning('.envlintrc.json already exists');
+      const shouldOverwrite = await prompt('Overwrite existing config?');
+      if (!shouldOverwrite) {
+        printInfo('Cancelled');
+        process.exit(0);
+      }
+    }
+    
+    createDefaultConfig(targetDir);
+    printSuccess(`.envlintrc.json created at ${configPath}`);
+    console.log();
+    printInfo('Edit .envlintrc.json to customize your settings');
+    printInfo('Run "envlint" to validate with your config');
+    process.exit(0);
+  }
+  
+  // Load config file if it exists
+  const config = loadConfig(targetDir) || {};
+
+  // Parse modes and options
+  const generateMode = args.includes('-g') || args.includes('--generate');
+  const fixMode = args.includes('--fix');
+  const protectMode = args.includes('--protect');
+  const protectInteractiveMode = args.includes('--protect-interactive');
+  const checkGitignoreMode = args.includes('--check-gitignore');
+  const compareMode = !!compareArg;
+
+  // Merge config with CLI args (CLI args take precedence)
+  const strictMode = args.includes('-s') || args.includes('--strict') || config.strict || false;
+  const checkSecrets = args.includes('--no-secrets') ? false : (config.checkSecrets !== false);
+  
+  // Parse filter options from CLI or config
+  const excludeVars = excludeArg 
+    ? excludeArg.split(',').map(v => v.trim()) 
+    : (config.exclude || undefined);
+    
+  const excludePattern = excludePatternArg 
+    ? new RegExp(excludePatternArg) 
+    : (config.excludePattern ? new RegExp(config.excludePattern) : undefined);
+    
+  const onlyVars = onlyArg 
+    ? onlyArg.split(',').map(v => v.trim()) 
+    : (config.only || undefined);
+    
+  const secretWhitelist = secretWhitelistArg 
+    ? secretWhitelistArg.split(',').map(v => v.trim()) 
+    : (config.secretWhitelist || undefined);
+    
+  const minSecretConfidence = minConfidenceArg 
+    ? parseFloat(minConfidenceArg) 
+    : (config.minSecretConfidence || undefined);
+
+  let envPath: string;
+  let examplePath: string;
+
+  // Handle compare mode
+  if (compareMode && compareArg) {
+    const files = compareArg.split(',').map(f => f.trim());
+    if (files.length !== 2) {
+      printError('--compare requires exactly 2 files (e.g., --compare .env.local,.env.production)');
+      process.exit(1);
+    }
+    envPath = path.isAbsolute(files[0]) ? files[0] : path.join(targetDir, files[0]);
+    examplePath = path.isAbsolute(files[1]) ? files[1] : path.join(targetDir, files[1]);
+  } else {
+    envPath = envFileArg ? path.join(targetDir, envFileArg) : path.join(targetDir, '.env');
+    examplePath = exampleFileArg ? path.join(targetDir, exampleFileArg) : path.join(targetDir, '.env.example');
+  }
 
   printBanner();
+  
+  // Show config status
+  if (config && Object.keys(config).length > 0) {
+    printInfo('Using .envlintrc.json configuration');
+  }
 
   // Generate mode
   if (generateMode) {
@@ -126,57 +235,208 @@ function main() {
     process.exit(0);
   }
 
+  // Protect mode - add to .gitignore
+  if (protectMode || protectInteractiveMode || checkGitignoreMode) {
+    const gitignoreCheck = checkGitignore(targetDir);
+    
+    printSection('.gitignore Protection Status');
+    
+    if (!gitignoreCheck.hasGitignore) {
+      printWarning('.gitignore file not found');
+      if (protectMode || protectInteractiveMode) {
+        printInfo('Creating .gitignore with env file patterns...');
+      }
+    } else {
+      if (gitignoreCheck.protectedPatterns.length > 0) {
+        printSuccess('.gitignore exists with env protection');
+        console.log(`  ${colors.gray}Protected patterns: ${gitignoreCheck.protectedPatterns.join(', ')}${colors.reset}`);
+      } else {
+        printWarning('.gitignore exists but env files are NOT protected');
+      }
+    }
+
+    if (gitignoreCheck.actualEnvFiles.length > 0) {
+      console.log(`\n  ${colors.cyan}Found env files:${colors.reset}`);
+      gitignoreCheck.actualEnvFiles.forEach(file => {
+        console.log(`    ${colors.gray}• ${file}${colors.reset}`);
+      });
+    }
+
+    if (gitignoreCheck.missingPatterns.length > 0) {
+      console.log(`\n  ${colors.yellow}Missing patterns:${colors.reset}`);
+      gitignoreCheck.missingPatterns.forEach(pattern => {
+        console.log(`    ${colors.gray}• ${pattern}${colors.reset}`);
+      });
+    }
+
+    // Interactive mode - ask user which patterns to add
+    if (protectInteractiveMode && gitignoreCheck.missingPatterns.length > 0) {
+      console.log();
+      printInfo('Select patterns to add to .gitignore:');
+      
+      const patternsToAdd: string[] = [];
+      for (const pattern of gitignoreCheck.missingPatterns) {
+        const shouldAdd = await prompt(`  Add "${pattern}"?`);
+        if (shouldAdd) {
+          patternsToAdd.push(pattern);
+        }
+      }
+      
+      if (patternsToAdd.length > 0) {
+        console.log();
+        const result = addToGitignore(targetDir, patternsToAdd);
+        
+        if (result.created) {
+          printSuccess('Created .gitignore');
+        }
+        
+        if (result.added.length > 0) {
+          printSuccess(`Added ${result.added.length} pattern(s) to .gitignore`);
+          result.added.forEach(pattern => {
+            console.log(`  ${colors.gray}• ${pattern}${colors.reset}`);
+          });
+        }
+        
+        console.log();
+        printSuccess('Your selected env files are now protected!');
+      } else {
+        printInfo('No patterns selected');
+      }
+    } 
+    // Auto mode - add all patterns
+    else if (protectMode && gitignoreCheck.missingPatterns.length > 0) {
+      console.log();
+      printInfo('Adding env file patterns to .gitignore...');
+      const result = addToGitignore(targetDir, gitignoreCheck.missingPatterns);
+      
+      if (result.created) {
+        printSuccess('Created .gitignore');
+      }
+      
+      if (result.added.length > 0) {
+        printSuccess(`Added ${result.added.length} pattern(s) to .gitignore`);
+        result.added.forEach(pattern => {
+          console.log(`  ${colors.gray}• ${pattern}${colors.reset}`);
+        });
+      } else {
+        printInfo('All patterns already in .gitignore');
+      }
+      
+      console.log();
+      printSuccess('Your env files are now protected!');
+    } else if (checkGitignoreMode) {
+      console.log();
+      if (gitignoreCheck.missingPatterns.length === 0) {
+        printSuccess('All env files are protected in .gitignore');
+      } else {
+        printWarning('Some env file patterns are missing from .gitignore');
+        printInfo('Run with --protect to add them automatically');
+        printInfo('Or use --protect-interactive to choose which patterns to add');
+      }
+    }
+    
+    process.exit(gitignoreCheck.missingPatterns.length > 0 && checkGitignoreMode ? 1 : 0);
+  }
+
   // Validation mode
   console.log(`${colors.gray}Directory: ${targetDir}${colors.reset}\n`);
 
-  // Detect all .env files
-  const allEnvFiles = fs.readdirSync(targetDir)
-    .filter(file => file.startsWith('.env') && !file.endsWith('.example') && !file.endsWith('.sample'))
-    .sort();
+  // Show filter info if active
+  if (compareMode) {
+    printInfo(`Compare mode: ${path.basename(envPath)} ↔ ${path.basename(examplePath)}`);
+  }
+  if (excludeVars && excludeVars.length > 0) {
+    printInfo(`Excluding variables: ${excludeVars.join(', ')}`);
+  }
+  if (excludePattern) {
+    printInfo(`Excluding pattern: ${excludePattern.source}`);
+  }
+  if (onlyVars && onlyVars.length > 0) {
+    printInfo(`Only checking: ${onlyVars.join(', ')}`);
+  }
+  if (secretWhitelist && secretWhitelist.length > 0) {
+    printInfo(`Secret detection whitelist: ${secretWhitelist.join(', ')}`);
+  }
+  if (minSecretConfidence !== undefined) {
+    printInfo(`Secret detection confidence threshold: ${Math.round(minSecretConfidence * 100)}%`);
+  }
+  if (excludeVars || excludePattern || onlyVars || secretWhitelist || minSecretConfidence !== undefined) {
+    console.log();
+  }
 
+  // Detect all .env files (skip in compare mode)
   let envExists = fileExists(envPath);
-  const exampleExists = fileExists(examplePath);
+  let exampleExists = fileExists(examplePath);
 
-  // Auto-detect env file if .env doesn't exist
-  if (!envExists && !envFileArg && allEnvFiles.length > 0) {
-    // Priority order for auto-detection
-    const priorityFiles = ['.env.local', '.env.development', '.env.dev', '.env.docker', '.env.prod', '.env.production'];
-    let autoEnvFile = priorityFiles.find(f => allEnvFiles.includes(f)) || allEnvFiles[0];
-    
-    printInfo(`Found ${allEnvFiles.length} .env files: ${allEnvFiles.join(', ')}`);
-    printInfo(`Auto-selecting: ${autoEnvFile}`);
-    console.log(`${colors.gray}Checking: ${autoEnvFile} vs ${path.basename(examplePath)}${colors.reset}\n`);
-    
-    // Update envPath to use auto-detected file
-    envPath = path.join(targetDir, autoEnvFile);
-    envExists = true;
-  } else if (allEnvFiles.length > 2) {
-    printInfo(`Found ${allEnvFiles.length} .env files: ${allEnvFiles.join(', ')}`);
-    const envFile = path.basename(envPath);
-    const exampleFile = path.basename(examplePath);
-    console.log(`${colors.gray}Checking: ${envFile} vs ${exampleFile}${colors.reset}\n`);
+  if (!compareMode) {
+    const allEnvFiles = fs.readdirSync(targetDir)
+      .filter(file => file.startsWith('.env') && !file.endsWith('.example') && !file.endsWith('.sample'))
+      .sort();
+
+    // Auto-detect env file if .env doesn't exist
+    if (!envExists && !envFileArg && allEnvFiles.length > 0) {
+      // Priority order for auto-detection
+      const priorityFiles = ['.env.local', '.env.development', '.env.dev', '.env.docker', '.env.prod', '.env.production'];
+      let autoEnvFile = priorityFiles.find(f => allEnvFiles.includes(f)) || allEnvFiles[0];
+      
+      printInfo(`Found ${allEnvFiles.length} .env files: ${allEnvFiles.join(', ')}`);
+      printInfo(`Auto-selecting: ${autoEnvFile}`);
+      console.log(`${colors.gray}Checking: ${autoEnvFile} vs ${path.basename(examplePath)}${colors.reset}\n`);
+      
+      // Update envPath to use auto-detected file
+      envPath = path.join(targetDir, autoEnvFile);
+      envExists = true;
+    } else if (allEnvFiles.length > 2) {
+      printInfo(`Found ${allEnvFiles.length} .env files: ${allEnvFiles.join(', ')}`);
+      const envFile = path.basename(envPath);
+      const exampleFile = path.basename(examplePath);
+      console.log(`${colors.gray}Checking: ${envFile} vs ${exampleFile}${colors.reset}\n`);
+    }
+  } else {
+    // In compare mode, just update the existence flags
+    envExists = fileExists(envPath);
+    exampleExists = fileExists(examplePath);
   }
 
   if (!envExists && !exampleExists) {
-    printError('No .env files found');
-    printInfo('Run with -g to generate .env.example');
+    if (compareMode) {
+      printError('Both comparison files not found');
+      printInfo(`File 1: ${envPath}`);
+      printInfo(`File 2: ${examplePath}`);
+    } else {
+      printError('No .env files found');
+      printInfo('Run with -g to generate .env.example');
+    }
     process.exit(1);
   }
 
   if (!envExists) {
-    printWarning(`.env file not found`);
-    if (allEnvFiles.length > 0) {
-      printInfo(`Available files: ${allEnvFiles.join(', ')}`);
-      printInfo(`Use: envlint --env ${allEnvFiles[0]}`);
+    if (compareMode) {
+      printError(`File not found: ${envPath}`);
     } else {
-      printInfo('Create .env from .env.example template');
+      printWarning(`.env file not found`);
+      if (!compareMode) {
+        const allEnvFiles = fs.readdirSync(targetDir)
+          .filter(file => file.startsWith('.env') && !file.endsWith('.example') && !file.endsWith('.sample'))
+          .sort();
+        if (allEnvFiles.length > 0) {
+          printInfo(`Available files: ${allEnvFiles.join(', ')}`);
+          printInfo(`Use: envlint --env ${allEnvFiles[0]}`);
+        } else {
+          printInfo('Create .env from .env.example template');
+        }
+      }
     }
     process.exit(1);
   }
 
   if (!exampleExists) {
-    printWarning('.env.example not found');
-    printInfo('Run with -g to generate it from .env');
+    if (compareMode) {
+      printError(`File not found: ${examplePath}`);
+    } else {
+      printWarning('.env.example not found');
+      printInfo('Run with -g to generate it from .env');
+    }
     process.exit(1);
   }
 
@@ -186,6 +446,12 @@ function main() {
     generateExample: false,
     checkSecrets,
     strict: strictMode,
+    exclude: excludeVars,
+    excludePattern,
+    only: onlyVars,
+    compareMode,
+    secretWhitelist,
+    minSecretConfidence,
   };
 
   const result = validateEnv(options);
@@ -261,9 +527,12 @@ function main() {
   if (result.potentialSecrets.length > 0) {
     hasIssues = true;
     printSection('⚠️  Potential Secrets Detected');
-    result.potentialSecrets.forEach(({ key, value, lineNumber, reason }) => {
+    result.potentialSecrets.forEach(({ key, value, lineNumber, reason, confidence }) => {
+      const confidencePercent = Math.round(confidence * 100);
+      const confidenceColor = confidence >= 0.9 ? colors.red : confidence >= 0.8 ? colors.yellow : colors.gray;
       printWarning(`${key} = ${value}`);
       console.log(`   ${colors.gray}Line ${lineNumber}: ${reason}${colors.reset}`);
+      console.log(`   ${confidenceColor}Confidence: ${confidencePercent}%${colors.reset}`);
     });
     console.log(`\n${colors.yellow}${colors.bright}WARNING:${colors.reset} ${colors.yellow}Ensure these secrets are not committed to version control!${colors.reset}`);
   }
@@ -281,6 +550,16 @@ function main() {
       result.missingInExample.forEach(key => {
         printInfo(`${key} (exists in ${result.envFileName} but not in ${result.exampleFileName})`);
       });
+    }
+  }
+
+  // Check .gitignore protection (only in non-compare mode)
+  if (!compareMode) {
+    const gitignoreCheck = checkGitignore(targetDir);
+    if (gitignoreCheck.actualEnvFiles.length > 0 && gitignoreCheck.missingPatterns.length > 0) {
+      console.log();
+      printWarning('Some env files may not be protected by .gitignore');
+      printInfo('Run with --check-gitignore to see details, or --protect to fix automatically');
     }
   }
 
@@ -311,10 +590,8 @@ function main() {
 
 // Run CLI
 if (require.main === module) {
-  try {
-    main();
-  } catch (error) {
+  main().catch((error) => {
     console.error(`${colors.red}Error:${colors.reset}`, error instanceof Error ? error.message : error);
     process.exit(1);
-  }
+  });
 }

@@ -1,0 +1,16 @@
+{
+  "strict": false,
+  "checkSecrets": true,
+  "minSecretConfidence": 0.7,
+  "exclude": [],
+  "secretWhitelist": [],
+  "gitignore": {
+    "enabled": true,
+    "patterns": [
+      ".env",
+      ".env.local",
+      ".env.*.local"
+    ],
+    "autoProtect": false
+  }
+}
