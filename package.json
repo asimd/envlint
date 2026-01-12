@@ -1,6 +1,6 @@
 {
-  "name": "envlint",
-  "version": "1.0.0",
+  "name": "@asimdelal/envlint",
+  "version": "1.0.1",
   "description": "Lightweight CLI to validate, clean, and manage .env files - zero dependencies",
   "keywords": [
     "env",

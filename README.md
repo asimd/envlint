@@ -2,7 +2,7 @@
 
 > Lightweight CLI to validate, clean, and manage your `.env` files
 
-[![npm version](https://badge.fury.io/js/envlint.svg)](https://www.npmjs.com/package/envlint)
+[![npm version](https://badge.fury.io/js/%40asimdelal%2Fenvlint.svg)](https://www.npmjs.com/package/@asimdelal/envlint)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 **Zero dependencies. Blazing fast. Works everywhere.**
@@ -22,10 +22,10 @@ Every project has `.env` files, but they're often messy and error-prone. **envli
 
 ```bash
 # Use instantly with npx (no install required)
-npx envlint
+npx @asimdelal/envlint
 
 # Or install globally
-npm install -g envlint
+npm install -g @asimdelal/envlint
 envlint
 ```
 
