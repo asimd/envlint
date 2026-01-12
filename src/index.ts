@@ -34,14 +34,15 @@ ${colors.bright}QUICK START:${colors.reset}
 ${colors.bright}COMMON COMMANDS:${colors.reset}
   envlint                            Check .env vs .env.example
   envlint -g                         Generate .env.example from .env
-  envlint -c .env.staging,.env.prod  Compare two environments
+  envlint -g .env.docker             Generate from specific env file
+  envlint -c .env.staging .env.prod  Compare two environments
   envlint --fix                      Auto-fix duplicates
   envlint --protect                  Add .env to .gitignore
 
 ${colors.bright}OPTIONS:${colors.reset}
-  -g, --generate              Generate .env.example
+  -g, --generate [file]       Generate .env.example (from .env or specified file)
   -s, --strict                Fail on undocumented variables
-  -c, --compare <file1,file2> Compare two files
+  -c, --compare <file1,file2> Compare two files (comma or space separated)
   --fix                       Auto-fix issues
   --protect                   Add to .gitignore
   --init                      Create config file
@@ -58,11 +59,11 @@ ${colors.bright}EXAMPLES:${colors.reset}
   ${colors.gray}# Just validate${colors.reset}
   envlint
 
-  ${colors.gray}# Compare staging vs production${colors.reset}
-  envlint -c .env.staging,.env.production --exclude NODE_ENV,PORT
+  ${colors.gray}# Generate from .env.docker${colors.reset}
+  envlint -g .env.docker
 
-  ${colors.gray}# Generate example file${colors.reset}
-  envlint -g
+  ${colors.gray}# Compare staging vs production (space-separated)${colors.reset}
+  envlint -c .env.staging .env.production --exclude NODE_ENV,PORT
 
   ${colors.gray}# Use config file for team consistency${colors.reset}
   envlint --init
@@ -124,14 +125,37 @@ async function main() {
   // Get directory first (needed for config loading and --init)
   const envFileArg = args.find((arg, i) => (args[i - 1] === '--env' || args[i - 1] === '-e') && !arg.startsWith('-'));
   const exampleFileArg = args.find((arg, i) => (args[i - 1] === '--example' || args[i - 1] === '-x') && !arg.startsWith('-'));
-  const compareArg = args.find((arg, i) => (args[i - 1] === '--compare' || args[i - 1] === '-c') && !arg.startsWith('-'));
+  
+  // Support source file for generate mode: envlint -g .env.docker
+  const generateIndex = args.findIndex(arg => arg === '-g' || arg === '--generate');
+  const generateSourceArg = generateIndex !== -1 ? args[generateIndex + 1] : undefined;
+  const isGenerateSource = generateSourceArg && !generateSourceArg.startsWith('-');
+  
+  // Handle compare args - support both comma-separated and space-separated
+  let compareArg: string | undefined;
+  let compareArg2: string | undefined;
+  const compareIndex = args.findIndex(arg => arg === '--compare' || arg === '-c');
+  if (compareIndex !== -1) {
+    const firstArg = args[compareIndex + 1];
+    if (firstArg && !firstArg.startsWith('-')) {
+      compareArg = firstArg;
+      // Check if it's comma-separated or if there's a second space-separated arg
+      if (!firstArg.includes(',')) {
+        const secondArg = args[compareIndex + 2];
+        if (secondArg && !secondArg.startsWith('-')) {
+          compareArg2 = secondArg;
+        }
+      }
+    }
+  }
+  
   const excludeArg = args.find((arg, i) => args[i - 1] === '--exclude' && !arg.startsWith('-'));
   const excludePatternArg = args.find((arg, i) => args[i - 1] === '--exclude-pattern' && !arg.startsWith('-'));
   const onlyArg = args.find((arg, i) => args[i - 1] === '--only' && !arg.startsWith('-'));
   const secretWhitelistArg = args.find((arg, i) => args[i - 1] === '--secret-whitelist' && !arg.startsWith('-'));
   const minConfidenceArg = args.find((arg, i) => args[i - 1] === '--min-confidence' && !arg.startsWith('-'));
   
-  const dirArg = args.find(arg => !arg.startsWith('-') && arg !== envFileArg && arg !== exampleFileArg && arg !== compareArg && arg !== excludeArg && arg !== excludePatternArg && arg !== onlyArg && arg !== secretWhitelistArg && arg !== minConfidenceArg) || '.';
+  const dirArg = args.find(arg => !arg.startsWith('-') && arg !== envFileArg && arg !== exampleFileArg && arg !== compareArg && arg !== compareArg2 && arg !== excludeArg && arg !== excludePatternArg && arg !== onlyArg && arg !== secretWhitelistArg && arg !== minConfidenceArg && arg !== generateSourceArg) || '.';
   const targetDir = resolvePath(dirArg);
 
   if (!fs.existsSync(targetDir)) {
@@ -202,9 +226,24 @@ async function main() {
 
   // Handle compare mode
   if (compareMode && compareArg) {
-    const files = compareArg.split(',').map(f => f.trim());
+    let files: string[];
+    
+    // Support both comma-separated and space-separated formats
+    if (compareArg.includes(',')) {
+      // Comma-separated: --compare .env.staging,.env.production
+      files = compareArg.split(',').map(f => f.trim());
+    } else if (compareArg2) {
+      // Space-separated: --compare .env.staging .env.production
+      files = [compareArg, compareArg2];
+    } else {
+      // Only one file provided
+      files = [compareArg];
+    }
+    
     if (files.length !== 2) {
-      printError('--compare requires exactly 2 files (e.g., --compare .env.local,.env.production)');
+      printError('--compare requires exactly 2 files');
+      printInfo('Usage: --compare .env.staging,.env.production  (comma-separated)');
+      printInfo('   or: --compare .env.staging .env.production  (space-separated)');
       process.exit(1);
     }
     envPath = path.isAbsolute(files[0]) ? files[0] : path.join(targetDir, files[0]);
@@ -223,13 +262,37 @@ async function main() {
 
   // Generate mode
   if (generateMode) {
-    if (!fileExists(envPath)) {
-      printError('.env file not found');
-      process.exit(1);
+    // If source file specified via -g argument (e.g., envlint -g .env.docker)
+    let sourceEnvPath = envPath;
+    if (isGenerateSource && generateSourceArg) {
+      sourceEnvPath = path.isAbsolute(generateSourceArg) 
+        ? generateSourceArg 
+        : path.join(targetDir, generateSourceArg);
+    }
+    
+    // If source doesn't exist, try to find an available env file
+    if (!fileExists(sourceEnvPath)) {
+      const allEnvFiles = fs.readdirSync(targetDir)
+        .filter(file => file.startsWith('.env') && !file.endsWith('.example') && !file.endsWith('.sample'))
+        .sort();
+      
+      if (allEnvFiles.length === 0) {
+        printError('No .env files found to generate from');
+        printInfo('Create a .env file first, or specify a source file:');
+        printInfo('  envlint -g .env.docker');
+        process.exit(1);
+      }
+      
+      // Auto-select first available env file
+      const autoSelected = allEnvFiles[0];
+      printInfo(`Found ${allEnvFiles.length} .env file(s): ${allEnvFiles.join(', ')}`);
+      printInfo(`Auto-selecting: ${autoSelected}`);
+      sourceEnvPath = path.join(targetDir, autoSelected);
     }
 
-    printInfo('Generating .env.example from .env...');
-    const envVars = require('./utils').parseEnvFile(envPath);
+    const sourceFileName = path.basename(sourceEnvPath);
+    printInfo(`Generating .env.example from ${sourceFileName}...`);
+    const envVars = require('./utils').parseEnvFile(sourceEnvPath);
     generateExample(envVars, examplePath);
     printSuccess(`.env.example generated at ${examplePath}`);
     process.exit(0);

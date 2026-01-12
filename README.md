@@ -42,8 +42,11 @@ npx @asimdelal/envlint
 # Generate .env.example
 npx @asimdelal/envlint -g
 
-# Compare environments
-npx @asimdelal/envlint -c .env.staging,.env.production
+# Generate .env.example from specific env file
+npx @asimdelal/envlint -g .env.docker
+
+# Compare environments (space or comma separated)
+npx @asimdelal/envlint -c .env.staging .env.production
 
 # Auto-fix duplicates
 npx @asimdelal/envlint --fix
@@ -275,9 +278,27 @@ envlint v1.2.0
 ✓ .env.example generated successfully
 ```
 
+**Generate from specific file:**
+
+```bash
+$ npx @asimdelal/envlint -g .env.docker
+
+envlint v1.2.0
+
+ℹ Generating .env.example from .env.docker...
+✓ .env.example generated successfully
+```
+
+**Auto-detection:**
+If `.env` doesn't exist, envlint will automatically find and use the first available env file.
+
 ### Compare Environments
 
 ```bash
+# Space-separated (easier to type)
+$ npx @asimdelal/envlint -c .env.staging .env.production
+
+# Or comma-separated
 $ npx @asimdelal/envlint -c .env.staging,.env.production
 
 envlint v1.2.0
