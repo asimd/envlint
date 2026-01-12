@@ -41,6 +41,8 @@ envlint [directory] [options]
 |--------|-------------|
 | `-g, --generate` | Generate `.env.example` from `.env` |
 | `-s, --strict` | Strict mode (fail on undocumented variables) |
+| `-e, --env <file>` | Specify env file (default: `.env`) |
+| `-x, --example <file>` | Specify example file (default: `.env.example`) |
 | `--no-secrets` | Skip secret detection |
 | `-h, --help` | Show help |
 

@@ -35,14 +35,18 @@ ${colors.bright}Usage:${colors.reset}
 ${colors.bright}Options:${colors.reset}
   -g, --generate          Generate .env.example from .env
   -s, --strict            Strict mode (fail on any discrepancy)
+  -e, --env <file>        Specify env file (default: .env)
+  -x, --example <file>    Specify example file (default: .env.example)
   --no-secrets           Skip secret detection
   -h, --help             Show this help message
 
 ${colors.bright}Examples:${colors.reset}
-  envlint                 # Lint current directory
-  envlint ./api           # Lint specific directory
-  envlint -g              # Generate .env.example
-  envlint --strict        # Strict validation
+  envlint                              # Lint current directory
+  envlint ./api                        # Lint specific directory
+  envlint -g                           # Generate .env.example
+  envlint --strict                     # Strict validation
+  envlint --env .env.local             # Check .env.local
+  envlint -e .env.docker -x .env.example  # Check specific files
 
 ${colors.bright}What it checks:${colors.reset}
   ✓ Missing variables in .env
@@ -87,8 +91,12 @@ function main() {
   const strictMode = args.includes('-s') || args.includes('--strict');
   const checkSecrets = !args.includes('--no-secrets');
 
+  // Get custom file paths
+  const envFileArg = args.find((arg, i) => (args[i - 1] === '--env' || args[i - 1] === '-e') && !arg.startsWith('-'));
+  const exampleFileArg = args.find((arg, i) => (args[i - 1] === '--example' || args[i - 1] === '-x') && !arg.startsWith('-'));
+
   // Get directory (first non-flag argument or current directory)
-  const dirArg = args.find(arg => !arg.startsWith('-')) || '.';
+  const dirArg = args.find(arg => !arg.startsWith('-') && arg !== envFileArg && arg !== exampleFileArg) || '.';
   const targetDir = resolvePath(dirArg);
 
   if (!fs.existsSync(targetDir)) {
@@ -96,8 +104,8 @@ function main() {
     process.exit(1);
   }
 
-  const envPath = path.join(targetDir, '.env');
-  const examplePath = path.join(targetDir, '.env.example');
+  const envPath = envFileArg ? path.join(targetDir, envFileArg) : path.join(targetDir, '.env');
+  const examplePath = exampleFileArg ? path.join(targetDir, exampleFileArg) : path.join(targetDir, '.env.example');
 
   printBanner();
 
@@ -118,17 +126,37 @@ function main() {
   // Validation mode
   console.log(`${colors.gray}Directory: ${targetDir}${colors.reset}\n`);
 
+  // Detect all .env files
+  const allEnvFiles = fs.readdirSync(targetDir)
+    .filter(file => file.startsWith('.env'))
+    .sort();
+
+  if (allEnvFiles.length > 2) {
+    printInfo(`Found ${allEnvFiles.length} .env files: ${allEnvFiles.join(', ')}`);
+    const envFile = path.basename(envPath);
+    const exampleFile = path.basename(examplePath);
+    console.log(`${colors.gray}Checking: ${envFile} vs ${exampleFile}${colors.reset}\n`);
+  }
+
   const envExists = fileExists(envPath);
   const exampleExists = fileExists(examplePath);
 
   if (!envExists && !exampleExists) {
     printError('Neither .env nor .env.example found');
-    printInfo('Run with -g to generate .env.example');
+    if (allEnvFiles.length > 0) {
+      printInfo(`Other env files found: ${allEnvFiles.join(', ')}`);
+      printInfo('Specify files to check with --env and --example flags (coming soon)');
+    } else {
+      printInfo('Run with -g to generate .env.example');
+    }
     process.exit(1);
   }
 
   if (!envExists) {
     printWarning('.env file not found (but .env.example exists)');
+    if (allEnvFiles.length > 0) {
+      printInfo(`Other env files available: ${allEnvFiles.filter(f => f !== '.env.example').join(', ')}`);
+    }
     printInfo('Create .env from .env.example template');
   }
 
