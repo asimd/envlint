@@ -11,6 +11,8 @@ export interface ValidationResult {
   duplicatesInExample: Map<string, number[]>;
   potentialSecrets: Array<{ key: string; value: string; lineNumber: number; reason: string }>;
   unusedInExample: string[];
+  envFileName: string;
+  exampleFileName: string;
 }
 
 export interface LintOptions {

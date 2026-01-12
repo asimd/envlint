@@ -37,6 +37,7 @@ ${colors.bright}Options:${colors.reset}
   -s, --strict            Strict mode (fail on any discrepancy)
   -e, --env <file>        Specify env file (default: .env)
   -x, --example <file>    Specify example file (default: .env.example)
+  --fix                  Auto-fix issues (remove duplicates)
   --no-secrets           Skip secret detection
   -h, --help             Show this help message
 
@@ -45,6 +46,7 @@ ${colors.bright}Examples:${colors.reset}
   envlint ./api                        # Lint specific directory
   envlint -g                           # Generate .env.example
   envlint --strict                     # Strict validation
+  envlint --fix                        # Auto-fix duplicates
   envlint --env .env.local             # Check .env.local
   envlint -e .env.docker -x .env.example  # Check specific files
 
@@ -90,6 +92,7 @@ function main() {
   const generateMode = args.includes('-g') || args.includes('--generate');
   const strictMode = args.includes('-s') || args.includes('--strict');
   const checkSecrets = !args.includes('--no-secrets');
+  const fixMode = args.includes('--fix');
 
   // Get custom file paths
   const envFileArg = args.find((arg, i) => (args[i - 1] === '--env' || args[i - 1] === '-e') && !arg.startsWith('-'));
@@ -104,7 +107,7 @@ function main() {
     process.exit(1);
   }
 
-  const envPath = envFileArg ? path.join(targetDir, envFileArg) : path.join(targetDir, '.env');
+  let envPath = envFileArg ? path.join(targetDir, envFileArg) : path.join(targetDir, '.env');
   const examplePath = exampleFileArg ? path.join(targetDir, exampleFileArg) : path.join(targetDir, '.env.example');
 
   printBanner();
@@ -128,44 +131,52 @@ function main() {
 
   // Detect all .env files
   const allEnvFiles = fs.readdirSync(targetDir)
-    .filter(file => file.startsWith('.env'))
+    .filter(file => file.startsWith('.env') && !file.endsWith('.example') && !file.endsWith('.sample'))
     .sort();
 
-  if (allEnvFiles.length > 2) {
+  let envExists = fileExists(envPath);
+  const exampleExists = fileExists(examplePath);
+
+  // Auto-detect env file if .env doesn't exist
+  if (!envExists && !envFileArg && allEnvFiles.length > 0) {
+    // Priority order for auto-detection
+    const priorityFiles = ['.env.local', '.env.development', '.env.dev', '.env.docker', '.env.prod', '.env.production'];
+    let autoEnvFile = priorityFiles.find(f => allEnvFiles.includes(f)) || allEnvFiles[0];
+    
+    printInfo(`Found ${allEnvFiles.length} .env files: ${allEnvFiles.join(', ')}`);
+    printInfo(`Auto-selecting: ${autoEnvFile}`);
+    console.log(`${colors.gray}Checking: ${autoEnvFile} vs ${path.basename(examplePath)}${colors.reset}\n`);
+    
+    // Update envPath to use auto-detected file
+    envPath = path.join(targetDir, autoEnvFile);
+    envExists = true;
+  } else if (allEnvFiles.length > 2) {
     printInfo(`Found ${allEnvFiles.length} .env files: ${allEnvFiles.join(', ')}`);
     const envFile = path.basename(envPath);
     const exampleFile = path.basename(examplePath);
     console.log(`${colors.gray}Checking: ${envFile} vs ${exampleFile}${colors.reset}\n`);
   }
 
-  const envExists = fileExists(envPath);
-  const exampleExists = fileExists(examplePath);
-
   if (!envExists && !exampleExists) {
-    printError('Neither .env nor .env.example found');
-    if (allEnvFiles.length > 0) {
-      printInfo(`Other env files found: ${allEnvFiles.join(', ')}`);
-      printInfo('Specify files to check with --env and --example flags (coming soon)');
-    } else {
-      printInfo('Run with -g to generate .env.example');
-    }
+    printError('No .env files found');
+    printInfo('Run with -g to generate .env.example');
     process.exit(1);
   }
 
   if (!envExists) {
-    printWarning('.env file not found (but .env.example exists)');
+    printWarning(`.env file not found`);
     if (allEnvFiles.length > 0) {
-      printInfo(`Other env files available: ${allEnvFiles.filter(f => f !== '.env.example').join(', ')}`);
+      printInfo(`Available files: ${allEnvFiles.join(', ')}`);
+      printInfo(`Use: envlint --env ${allEnvFiles[0]}`);
+    } else {
+      printInfo('Create .env from .env.example template');
     }
-    printInfo('Create .env from .env.example template');
+    process.exit(1);
   }
 
   if (!exampleExists) {
     printWarning('.env.example not found');
     printInfo('Run with -g to generate it from .env');
-  }
-
-  if (!envExists || !exampleExists) {
     process.exit(1);
   }
 
@@ -179,22 +190,59 @@ function main() {
 
   const result = validateEnv(options);
 
+  // Fix mode - remove duplicates
+  if (fixMode) {
+    let fixedCount = 0;
+    
+    if (result.duplicatesInEnv.size > 0) {
+      printSection('Fixing Issues');
+      const { removed, duplicates } = require('./utils').removeDuplicates(envPath);
+      if (removed > 0) {
+        printSuccess(`Removed ${removed} duplicate variable(s) from ${path.basename(envPath)}`);
+        duplicates.forEach((key: string) => {
+          console.log(`  ${colors.gray}• ${key}${colors.reset}`);
+        });
+        fixedCount += removed;
+      }
+    }
+
+    if (result.duplicatesInExample.size > 0) {
+      const { removed, duplicates } = require('./utils').removeDuplicates(examplePath);
+      if (removed > 0) {
+        printSuccess(`Removed ${removed} duplicate variable(s) from ${path.basename(examplePath)}`);
+        duplicates.forEach((key: string) => {
+          console.log(`  ${colors.gray}• ${key}${colors.reset}`);
+        });
+        fixedCount += removed;
+      }
+    }
+
+    if (fixedCount > 0) {
+      console.log();
+      printInfo('Re-run envlint to verify fixes');
+      process.exit(0);
+    } else {
+      printInfo('No fixable issues found');
+      console.log();
+    }
+  }
+
   // Print results
   let hasIssues = false;
 
   // Missing in .env (ERROR)
   if (result.missingInEnv.length > 0) {
     hasIssues = true;
-    printSection('Missing in .env');
+    printSection(`Missing in ${result.envFileName}`);
     result.missingInEnv.forEach(key => {
-      printError(`${key} (defined in .env.example but missing in .env)`);
+      printError(`${key} (defined in ${result.exampleFileName} but missing in ${result.envFileName})`);
     });
   }
 
   // Duplicates in .env (ERROR)
   if (result.duplicatesInEnv.size > 0) {
     hasIssues = true;
-    printSection('Duplicate Variables in .env');
+    printSection(`Duplicate Variables in ${result.envFileName}`);
     result.duplicatesInEnv.forEach((lines, key) => {
       printError(`${key} (defined on lines: ${lines.join(', ')})`);
     });
@@ -203,7 +251,7 @@ function main() {
   // Duplicates in .env.example (ERROR)
   if (result.duplicatesInExample.size > 0) {
     hasIssues = true;
-    printSection('Duplicate Variables in .env.example');
+    printSection(`Duplicate Variables in ${result.exampleFileName}`);
     result.duplicatesInExample.forEach((lines, key) => {
       printError(`${key} (defined on lines: ${lines.join(', ')})`);
     });
@@ -224,14 +272,14 @@ function main() {
   if (result.missingInExample.length > 0) {
     if (strictMode) {
       hasIssues = true;
-      printSection('Missing in .env.example (Strict Mode)');
+      printSection(`Missing in ${result.exampleFileName} (Strict Mode)`);
       result.missingInExample.forEach(key => {
-        printError(`${key} (exists in .env but not documented in .env.example)`);
+        printError(`${key} (exists in ${result.envFileName} but not documented in ${result.exampleFileName})`);
       });
     } else {
       printSection('Undocumented Variables');
       result.missingInExample.forEach(key => {
-        printInfo(`${key} (exists in .env but not in .env.example)`);
+        printInfo(`${key} (exists in ${result.envFileName} but not in ${result.exampleFileName})`);
       });
     }
   }

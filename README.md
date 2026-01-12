@@ -11,7 +11,8 @@ Every project has `.env` files, but they're often messy and error-prone. **envli
 
 ## Features
 
-- **Compare** `.env` vs `.env.example`
+- **Compare** `.env` vs `.env.example` (or any `.env.*` file)
+- **Auto-detects** available env files (`.env.local`, `.env.docker`, etc.)
 - **Find** missing, unused, and duplicated variables
 - **Detect** secrets accidentally committed (API keys, tokens, etc.)
 - **Auto-generate** `.env.example` from `.env`

@@ -1,3 +1,4 @@
+import * as path from 'path';
 import { ValidationResult, EnvVar, LintOptions } from './types';
 import { parseEnvFile, detectSecrets, findDuplicates } from './utils';
 
@@ -32,6 +33,8 @@ export function validateEnv(options: LintOptions): ValidationResult {
     duplicatesInExample,
     potentialSecrets,
     unusedInExample,
+    envFileName: path.basename(options.envPath),
+    exampleFileName: path.basename(options.examplePath),
   };
 }
 

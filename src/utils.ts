@@ -191,3 +191,51 @@ export function fileExists(filePath: string): boolean {
 export function resolvePath(inputPath: string): string {
   return path.resolve(process.cwd(), inputPath);
 }
+
+/**
+ * Remove duplicates from env file (keeps first occurrence)
+ */
+export function removeDuplicates(filePath: string): { removed: number; duplicates: string[] } {
+  if (!fs.existsSync(filePath)) {
+    return { removed: 0, duplicates: [] };
+  }
+
+  const content = fs.readFileSync(filePath, 'utf-8');
+  const lines = content.split('\n');
+  const seen = new Set<string>();
+  const newLines: string[] = [];
+  const duplicates: string[] = [];
+  let removed = 0;
+
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    
+    // Keep empty lines and comments
+    if (!trimmed || trimmed.startsWith('#')) {
+      newLines.push(line);
+      return;
+    }
+
+    // Parse KEY=VALUE format
+    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+    if (match) {
+      const key = match[1];
+      
+      if (seen.has(key)) {
+        // Duplicate found - skip this line
+        duplicates.push(key);
+        removed++;
+        return;
+      }
+      
+      seen.add(key);
+    }
+
+    newLines.push(line);
+  });
+
+  // Write back to file
+  fs.writeFileSync(filePath, newLines.join('\n'));
+
+  return { removed, duplicates: Array.from(new Set(duplicates)) };
+}
