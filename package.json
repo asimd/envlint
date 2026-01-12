@@ -1,0 +1,57 @@
+{
+  "name": "envlint",
+  "version": "1.0.0",
+  "description": "Lightweight CLI to validate, clean, and manage .env files - zero dependencies",
+  "keywords": [
+    "env",
+    "environment",
+    "dotenv",
+    "validation",
+    "linter",
+    "cli",
+    "secrets",
+    "env-example",
+    "environment-variables",
+    "developer-tools",
+    "devops",
+    "security"
+  ],
+  "homepage": "https://github.com/asimd/envlint#readme",
+  "bugs": {
+    "url": "https://github.com/asimd/envlint/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asimd/envlint.git"
+  },
+  "license": "MIT",
+  "author": "asimd <https://github.com/asimd>",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "envlint": "dist/index.js"
+  },
+  "directories": {
+    "example": "examples"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build",
+    "test": "node dist/index.js examples/"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
