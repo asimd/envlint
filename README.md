@@ -24,11 +24,24 @@ Every project has `.env` files, but they're often messy and error-prone. **envli
 - **Zero dependencies** - lightweight and fast
 - **Beautiful output** with color-coded results
 
+## Installation
+
+```bash
+# Run without installing (recommended for trying it out)
+npx @asimdelal/envlint
+
+# Install globally
+npm install -g @asimdelal/envlint
+
+# Or install as dev dependency in your project
+npm install --save-dev @asimdelal/envlint
+```
+
 ## Quick Start
 
 ```bash
 # Just run it - that's all you need!
-npx @asimdelal/envlint
+envlint
 ```
 
 **That's it!** It automatically checks your `.env` vs `.env.example`.
@@ -37,22 +50,22 @@ npx @asimdelal/envlint
 
 ```bash
 # Validate (default)
-npx @asimdelal/envlint
+envlint
 
 # Generate .env.example
-npx @asimdelal/envlint -g
+envlint -g
 
 # Generate .env.example from specific env file
-npx @asimdelal/envlint -g .env.docker
+envlint -g .env.docker
 
 # Compare environments (space or comma separated)
-npx @asimdelal/envlint -c .env.staging .env.production
+envlint -c .env.staging .env.production
 
 # Auto-fix duplicates
-npx @asimdelal/envlint --fix
+envlint --fix
 
 # Protect .env in .gitignore
-npx @asimdelal/envlint --protect
+envlint --protect
 ```
 
 ### Optional: Create Config File
@@ -61,10 +74,10 @@ For team-wide settings:
 
 ```bash
 # Create .envlintrc.json
-npx @asimdelal/envlint --init
+envlint --init
 
 # Now just run envlint (uses config automatically)
-npx @asimdelal/envlint
+envlint
 ```
 
 ## Configuration File (Recommended)
@@ -257,7 +270,7 @@ envlint --min-confidence 0.85 --secret-whitelist PUBLIC_KEY,JWKS_URI
 ### Just Validate (Most Common)
 
 ```bash
-$ npx @asimdelal/envlint
+$ envlint
 
 envlint v1.2.0
 
@@ -270,7 +283,7 @@ Directory: /Users/me/project
 ### Generate .env.example
 
 ```bash
-$ npx @asimdelal/envlint -g
+$ envlint -g
 
 envlint v1.2.0
 
@@ -281,7 +294,7 @@ envlint v1.2.0
 **Generate from specific file:**
 
 ```bash
-$ npx @asimdelal/envlint -g .env.docker
+$ envlint -g .env.docker
 
 envlint v1.2.0
 
@@ -296,10 +309,10 @@ If `.env` doesn't exist, envlint will automatically find and use the first avail
 
 ```bash
 # Space-separated (easier to type)
-$ npx @asimdelal/envlint -c .env.staging .env.production
+$ envlint -c .env.staging .env.production
 
 # Or comma-separated
-$ npx @asimdelal/envlint -c .env.staging,.env.production
+$ envlint -c .env.staging,.env.production
 
 envlint v1.2.0
 
@@ -316,7 +329,7 @@ Missing in .env.staging
 ### With Issues Found
 
 ```bash
-$ npx @asimdelal/envlint
+$ envlint
 
 envlint v1.2.0
 
@@ -344,7 +357,7 @@ Duplicate Variables in .env
 ### Create Config File
 
 ```bash
-$ npx @asimdelal/envlint --init
+$ envlint --init
 
 ✓ .envlintrc.json created
 ℹ Run "envlint" to validate with your config
@@ -353,7 +366,7 @@ $ npx @asimdelal/envlint --init
 ### Auto-Fix Duplicates
 
 ```bash
-$ npx @asimdelal/envlint --fix
+$ envlint --fix
 
 ✓ Removed 2 duplicate variable(s)
   • PORT
@@ -363,13 +376,13 @@ $ npx @asimdelal/envlint --fix
 ### Exclude Variables
 
 ```bash
-$ npx @asimdelal/envlint --exclude NODE_ENV,PORT,DEBUG
+$ envlint --exclude NODE_ENV,PORT,DEBUG
 ```
 
 ### Compare with Exclusions
 
 ```bash
-$ npx @asimdelal/envlint -c .env.staging,.env.prod --exclude NODE_ENV,PORT
+$ envlint -c .env.staging,.env.prod --exclude NODE_ENV,PORT
 ```
 
 </details>
